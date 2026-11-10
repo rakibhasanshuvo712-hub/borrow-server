@@ -1,0 +1,35 @@
+import mongoose, { Schema, type InferSchemaType, type Model, type Types } from 'mongoose';
+const { ObjectId } = Schema.Types;
+const categorySchema = new Schema({ slug: { type: String, unique: true, required: true }, name: { type: String, required: true }, icon: { type: String, required: true } }, { timestamps: true });
+const itemSchema = new Schema({ owner: { type: String, required: true, index: true }, name: { type: String, required: true, trim: true }, category: { type: String, required: true, index: true }, brand: String, model: String, description: { type: String, required: true }, includes: [String], images: [String], condition: { type: String, enum: ['New','Like New','Excellent','Good','Fair'], required: true }, pricing: { daily: { type: Number, required: true }, weekly: { type: Number, required: true }, monthly: { type: Number, required: true } }, deposit: { type: Number, default: 0 }, location: { area: String, city: String, coordinates: { type: { type: String, enum: ['Point'], default: 'Point' }, coordinates: { type: [Number], default: [0,0] } } }, pickupOption: { type: String, enum: ['owner_pickup','delivery','both'], default: 'both' }, status: { type: String, enum: ['pending','approved','rejected','paused'], default: 'pending', index: true }, avgRating: { type: Number, default: 0 }, reviewCount: { type: Number, default: 0 }, totalBookings: { type: Number, default: 0 }, isFeatured: { type: Boolean, default: false, index: true }, featuredOrder: { type: Number, default: 0 } }, { timestamps: true });
+itemSchema.index({ name: 'text', brand: 'text', description: 'text' }); itemSchema.index({ 'location.coordinates': '2dsphere' });
+const bookingSchema = new Schema({ item: { type: ObjectId, ref: 'Item', required: true }, renter: { type: String, required: true, index: true }, owner: { type: String, required: true, index: true }, startDate: { type: Date, required: true }, endDate: { type: Date, required: true }, days: { type: Number, required: true }, pricing: { rate: Number, rentalTotal: Number, serviceFee: Number, deposit: Number, grandTotal: Number }, status: { type: String, enum: ['requested','approved','paid','picked_up','active','returned','completed','rejected','cancelled','disputed'], default: 'requested', index: true }, statusHistory: [{ status: String, actor: String, at: { type: Date, default: Date.now }, note: String }], renterMessage: String, beforePhotos: [String], afterPhotos: [String] }, { timestamps: true });
+bookingSchema.index({ item: 1, startDate: 1, endDate: 1, status: 1 });
+const reviewSchema = new Schema({ booking: { type: ObjectId, ref: 'Booking', required: true }, item: { type: ObjectId, ref: 'Item', required: true }, reviewer: { type: String, required: true }, reviewee: { type: String, required: true }, rating: { type: Number, min: 1, max: 5, required: true }, comment: String }, { timestamps: true }); reviewSchema.index({ booking: 1, reviewer: 1 }, { unique: true });
+const favoriteSchema = new Schema({ user: { type: String, required: true }, item: { type: ObjectId, ref: 'Item', required: true } }, { timestamps: true }); favoriteSchema.index({ user: 1, item: 1 }, { unique: true });
+const conversationSchema = new Schema({ participants: { type: [String], required: true }, item: { type: ObjectId, ref: 'Item' }, lastMessage: String, unreadCounts: { type: Map, of: Number, default: {} } }, { timestamps: true });
+const messageSchema = new Schema({ conversation: { type: ObjectId, ref: 'Conversation', required: true, index: true }, sender: { type: String, required: true }, text: { type: String, required: true, maxlength: 5000 }, readAt: Date }, { timestamps: true });
+const disputeSchema = new Schema({ booking: { type: ObjectId, ref: 'Booking', required: true }, openedBy: { type: String, required: true }, reason: { type: String, required: true }, severity: { type: String, enum: ['low','medium','high'], default: 'medium' }, status: { type: String, enum: ['open','investigating','resolved'], default: 'open' }, evidence: [String], resolutionNote: String }, { timestamps: true });
+const verificationSchema = new Schema({ user: { type: String, required: true }, type: { type: String, enum: ['identity','phone','owner'], required: true }, documents: [String], status: { type: String, enum: ['pending','approved','rejected'], default: 'pending' } }, { timestamps: true });
+export type WithId<T> = T & { _id: Types.ObjectId };
+export type CategoryData = WithId<InferSchemaType<typeof categorySchema>>;
+export type ItemData = WithId<InferSchemaType<typeof itemSchema>>;
+export type BookingData = WithId<InferSchemaType<typeof bookingSchema>>;
+export type ReviewData = WithId<InferSchemaType<typeof reviewSchema>>;
+export type FavoriteData = WithId<InferSchemaType<typeof favoriteSchema>>;
+export type ConversationData = WithId<InferSchemaType<typeof conversationSchema>>;
+export type MessageData = WithId<InferSchemaType<typeof messageSchema>>;
+export type DisputeData = WithId<InferSchemaType<typeof disputeSchema>>;
+export type VerificationData = WithId<InferSchemaType<typeof verificationSchema>>;
+
+const registered = <T>(name: string): Model<T> | undefined => mongoose.models[name] as Model<T> | undefined;
+
+export const Category: Model<CategoryData> = registered<CategoryData>('Category') ?? mongoose.model('Category', categorySchema) as unknown as Model<CategoryData>;
+export const Item: Model<ItemData> = registered<ItemData>('Item') ?? mongoose.model('Item', itemSchema) as unknown as Model<ItemData>;
+export const Booking: Model<BookingData> = registered<BookingData>('Booking') ?? mongoose.model('Booking', bookingSchema) as unknown as Model<BookingData>;
+export const Review: Model<ReviewData> = registered<ReviewData>('Review') ?? mongoose.model('Review', reviewSchema) as unknown as Model<ReviewData>;
+export const Favorite: Model<FavoriteData> = registered<FavoriteData>('Favorite') ?? mongoose.model('Favorite', favoriteSchema) as unknown as Model<FavoriteData>;
+export const Conversation: Model<ConversationData> = registered<ConversationData>('Conversation') ?? mongoose.model('Conversation', conversationSchema) as unknown as Model<ConversationData>;
+export const Message: Model<MessageData> = registered<MessageData>('Message') ?? mongoose.model('Message', messageSchema) as unknown as Model<MessageData>;
+export const Dispute: Model<DisputeData> = registered<DisputeData>('Dispute') ?? mongoose.model('Dispute', disputeSchema) as unknown as Model<DisputeData>;
+export const VerificationRequest: Model<VerificationData> = registered<VerificationData>('VerificationRequest') ?? mongoose.model('VerificationRequest', verificationSchema) as unknown as Model<VerificationData>;

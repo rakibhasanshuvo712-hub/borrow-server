@@ -1,0 +1,69 @@
+@base = http://localhost:5000/api
+@itemId = REPLACE_ITEM_ID
+@bookingId = REPLACE_BOOKING_ID
+@conversationId = REPLACE_CONVERSATION_ID
+
+### health
+GET {{base}}/health
+
+### categories and search
+GET {{base}}/categories
+GET {{base}}/items?q=camera&sort=price_asc&page=1&limit=20
+GET {{base}}/items/featured?limit=12
+
+### Auth: session based sign up/sign in via Better Auth
+POST {{base}}/auth/sign-up/email
+Content-Type: application/json
+{ "name":"Demo renter", "email":"demo@example.com", "password":"ChangeMe_123456!" }
+
+### get current session
+GET {{base}}/auth/get-session
+
+### profile
+GET {{base}}/me
+PATCH {{base}}/me
+Content-Type: application/json
+{ "phone":"+8801700000000", "location":"Dhaka", "canRent":true, "canList":true }
+
+### item detail and availability
+GET {{base}}/items/{{itemId}}
+GET {{base}}/items/{{itemId}}/availability?month=2026-12
+
+### quote then create booking
+POST {{base}}/bookings/quote
+Content-Type: application/json
+{ "itemId":"{{itemId}}", "startDate":"2026-12-01", "endDate":"2026-12-04" }
+
+POST {{base}}/bookings
+Content-Type: application/json
+{ "itemId":"{{itemId}}", "startDate":"2026-12-01", "endDate":"2026-12-04", "renterMessage":"Please confirm pickup." }
+
+GET {{base}}/bookings/mine?role=renter&page=1
+PATCH {{base}}/bookings/{{bookingId}}/status
+Content-Type: application/json
+{ "action":"approve" }
+
+### start conversation and message
+POST {{base}}/conversations
+Content-Type: application/json
+{ "ownerId":"REPLACE_OWNER_ID", "itemId":"{{itemId}}" }
+
+POST {{base}}/conversations/{{conversationId}}/messages
+Content-Type: application/json
+{ "text":"Is this item available?" }
+GET {{base}}/conversations/{{conversationId}}/messages
+
+### favorites and dashboard
+POST {{base}}/favorites/{{itemId}}
+GET {{base}}/favorites
+GET {{base}}/dashboard/renter
+
+### create a listing
+POST {{base}}/items
+Content-Type: application/json
+{ "name":"Camera kit", "category":"cameras", "description":"Camera kit available for rental in Dhaka", "condition":"Excellent", "pricing":{"daily":1000,"weekly":6000,"monthly":20000}, "deposit":2000,"location":{"area":"Dhanmondi","city":"Dhaka","coordinates":{"type":"Point","coordinates":[90.37,23.74]}} }
+
+### feature an item for the homepage (admin)
+PATCH {{base}}/admin/items/{{itemId}}/feature
+Content-Type: application/json
+{ "isFeatured": true, "featuredOrder": 10 }
