@@ -88,6 +88,7 @@ const auth = betterAuth({
   trustedOrigins: [
     env.FRONTEND_URL,
     'https://borrowhub-client.vercel.app',
+    'https://borrow-client.vercel.app',
     'https://borrowhub-server.vercel.app',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
@@ -95,6 +96,14 @@ const auth = betterAuth({
     'http://127.0.0.1:5000',
     'http://localhost:8000',
     'http://127.0.0.1:8000',
+    (origin) => {
+      if (!origin) return true;
+      const clean = origin.replace(/\/$/, '');
+      return (
+        clean.endsWith('.vercel.app') ||
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(clean)
+      );
+    },
   ].filter(Boolean),
   emailAndPassword: { enabled: true },
   user: {
@@ -396,6 +405,7 @@ const priceForDays = (days, pricing) => {
 
 // ─── Express app ────────────────────────────────────────────────────────────────
 const app = express();
+app.set('trust proxy', 1);
 
 app.use(
   helmet({
@@ -408,6 +418,7 @@ app.use(
 const allowedOrigins = [
   env.FRONTEND_URL,
   'https://borrowhub-client.vercel.app',
+  'https://borrow-client.vercel.app',
   'https://borrowhub-server.vercel.app',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
@@ -420,10 +431,16 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin) return callback(null, true);
+      const cleanOrigin = origin.replace(/\/$/, '');
+      if (
+        allowedOrigins.includes(cleanOrigin) ||
+        cleanOrigin.endsWith('.vercel.app') ||
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(cleanOrigin)
+      ) {
         return callback(null, true);
       }
-      return callback(new Error('Not allowed by CORS'));
+      return callback(null, true);
     },
     credentials: true,
   }),
