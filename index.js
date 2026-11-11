@@ -299,6 +299,17 @@ const disputeSchema = new Schema(
     status: { type: String, enum: ['open', 'investigating', 'resolved'], default: 'open' },
     evidence: [String],
     resolutionNote: String,
+    messages: [
+      {
+        sender: { type: String, required: true },
+        senderName: { type: String, default: '' },
+        senderRole: { type: String, enum: ['renter', 'owner', 'admin'], default: 'renter' },
+        text: { type: String, required: true },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
+    resolvedBy: String,
+    resolvedAt: Date,
   },
   { timestamps: true },
 );
@@ -409,14 +420,6 @@ const priceForDays = (days, pricing) => {
 const app = express();
 app.set('trust proxy', 1);
 
-app.use(
-  helmet({
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
-    crossOriginOpenerPolicy: false,
-    contentSecurityPolicy: env.NODE_ENV === 'production' ? undefined : false,
-  }),
-);
-
 const allowedOrigins = [
   env.FRONTEND_URL,
   'https://borrowhub-client.vercel.app',
@@ -445,6 +448,18 @@ app.use(
       return callback(null, true);
     },
     credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    exposedHeaders: ['Set-Cookie'],
+    maxAge: 86400,
+  }),
+);
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginOpenerPolicy: false,
+    contentSecurityPolicy: false,
   }),
 );
 app.use(compression());
@@ -523,23 +538,30 @@ app.get('/api/categories', wrap(async (_req, res) => {
 const itemInput = z.object({
   name: z.string().min(3).max(120),
   category: z.string(),
-  brand: z.string().max(80).optional(),
-  model: z.string().max(80).optional(),
+  brand: z.string().max(80).optional().nullable().or(z.literal('')),
+  model: z.string().max(80).optional().nullable().or(z.literal('')),
   description: z.string().min(10).max(5000),
   phone: z.string().max(30).optional().default(''),
-  quantity: z.number().int().min(1).optional().default(1),
+  quantity: z.coerce.number().int().min(1).default(1),
   includes: z.array(z.string()).max(30).default([]),
-  images: z.array(z.string().url()).max(8).default([]),
+  images: z.array(z.string().min(1)).max(8).default([]),
   condition: z.enum(['New', 'Like New', 'Excellent', 'Good', 'Fair']),
-  pricing: z.object({ daily: z.number().positive(), weekly: z.number().positive(), monthly: z.number().positive() }),
-  deposit: z.number().min(0).default(0),
+  pricing: z.object({
+    daily: z.coerce.number().positive(),
+    weekly: z.coerce.number().positive(),
+    monthly: z.coerce.number().positive(),
+  }),
+  deposit: z.coerce.number().min(0).default(0),
   location: z.object({
-    area: z.string(),
-    city: z.string(),
-    coordinates: z.object({
-      type: z.literal('Point').default('Point'),
-      coordinates: z.tuple([z.number(), z.number()]),
-    }),
+    area: z.string().min(1),
+    city: z.string().min(1),
+    coordinates: z
+      .object({
+        type: z.literal('Point').default('Point'),
+        coordinates: z.tuple([z.number(), z.number()]),
+      })
+      .optional()
+      .default({ type: 'Point', coordinates: [0, 0] }),
   }),
   pickupOption: z.enum(['owner_pickup', 'delivery', 'both']).default('both'),
 });
@@ -1057,20 +1079,73 @@ app.get('/api/dashboard/owner', requireAuth, wrap(async (req, res) => {
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  DISPUTES  (Create)
+//  DISPUTES  (Full Dispute Resolution Center)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// READ – list all disputes for current user (renter or owner)
+app.get('/api/disputes', requireAuth, wrap(async (req, res) => {
+  const userBookings = await Booking.find({
+    $or: [{ renter: req.user.id }, { owner: req.user.id }],
+  }).distinct('_id');
+
+  const disputes = await Dispute.find({
+    $or: [{ openedBy: req.user.id }, { booking: { $in: userBookings } }],
+  })
+    .populate({
+      path: 'booking',
+      populate: { path: 'item', select: 'name images pricing phone' },
+    })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  send(res, disputes, 'Disputes loaded');
+}));
+
+// READ – single dispute by ID
+app.get('/api/disputes/:id', requireAuth, wrap(async (req, res) => {
+  const dispute = await Dispute.findById(id(req.params.id))
+    .populate({
+      path: 'booking',
+      populate: { path: 'item', select: 'name images pricing phone owner' },
+    })
+    .lean();
+
+  if (!dispute) throw new AppError(404, 'Dispute not found');
+  const b = dispute.booking;
+  if (
+    dispute.openedBy !== req.user.id &&
+    b?.renter !== req.user.id &&
+    b?.owner !== req.user.id &&
+    req.user.role !== 'admin'
+  ) {
+    throw new AppError(403, 'Not authorized to view this dispute');
+  }
+
+  const [renterUser, ownerUser] = await Promise.all([
+    b?.renter ? authMongoClient.db().collection('user').findOne({ _id: toMongoId(b.renter) }, { projection: { name: 1, phone: 1, role: 1 } }) : null,
+    b?.owner ? authMongoClient.db().collection('user').findOne({ _id: toMongoId(b.owner) }, { projection: { name: 1, phone: 1, role: 1 } }) : null,
+  ]);
+
+  send(res, {
+    ...dispute,
+    renter: renterUser,
+    owner: ownerUser,
+  });
+}));
+
+// CREATE – open a new dispute / complaint
 app.post('/api/disputes', requireAuth, wrap(async (req, res) => {
   const data = z
     .object({
       bookingId: z.string(),
-      reason: z.string().min(10).max(3000),
+      reason: z.string().min(5).max(3000),
       severity: z.enum(['low', 'medium', 'high']).default('medium'),
       evidence: z.array(z.string().url()).max(10).default([]),
+      initialMessage: z.string().max(2000).optional(),
     })
     .parse(req.body);
 
-  const booking = await Booking.findById(id(data.bookingId));
+  const booking = await Booking.findById(id(data.bookingId)).populate('item');
   if (!booking || (booking.renter !== req.user.id && booking.owner !== req.user.id))
     throw new AppError(403, 'Booking participant required');
 
@@ -1078,7 +1153,91 @@ app.post('/api/disputes', requireAuth, wrap(async (req, res) => {
   booking.statusHistory.push({ status: 'disputed', actor: req.user.id, at: new Date() });
   await booking.save();
 
-  send(res, await Dispute.create({ booking: booking._id, openedBy: req.user.id, ...data }), 'Dispute opened', 201);
+  const userRole = booking.owner === req.user.id ? 'owner' : 'renter';
+  const initialMsg = data.initialMessage || data.reason;
+
+  const dispute = await Dispute.create({
+    booking: booking._id,
+    openedBy: req.user.id,
+    reason: data.reason,
+    severity: data.severity,
+    evidence: data.evidence,
+    messages: [
+      {
+        sender: req.user.id,
+        senderName: req.user.name || (userRole === 'owner' ? 'Owner' : 'Renter'),
+        senderRole: userRole,
+        text: initialMsg,
+        createdAt: new Date(),
+      },
+    ],
+  });
+
+  send(res, dispute, 'Dispute opened', 201);
+}));
+
+// CREATE – add response message to dispute thread
+app.post('/api/disputes/:id/messages', requireAuth, wrap(async (req, res) => {
+  const { text } = z.object({ text: z.string().min(1).max(3000) }).parse(req.body);
+  const dispute = await Dispute.findById(id(req.params.id)).populate('booking');
+  if (!dispute) throw new AppError(404, 'Dispute not found');
+
+  const b = dispute.booking;
+  if (
+    dispute.openedBy !== req.user.id &&
+    b?.renter !== req.user.id &&
+    b?.owner !== req.user.id &&
+    req.user.role !== 'admin'
+  ) {
+    throw new AppError(403, 'Not authorized to comment on this dispute');
+  }
+
+  const role = req.user.role === 'admin' ? 'admin' : b?.owner === req.user.id ? 'owner' : 'renter';
+  const newMsg = {
+    sender: req.user.id,
+    senderName: req.user.name || (role === 'owner' ? 'Owner' : 'Renter'),
+    senderRole: role,
+    text: text.trim(),
+    createdAt: new Date(),
+  };
+
+  dispute.messages.push(newMsg);
+  if (dispute.status === 'open') {
+    dispute.status = 'investigating';
+  }
+  await dispute.save();
+
+  send(res, newMsg, 'Message added', 201);
+}));
+
+// UPDATE – resolve dispute
+app.patch('/api/disputes/:id/resolve', requireAuth, wrap(async (req, res) => {
+  const { resolutionNote } = z.object({ resolutionNote: z.string().max(3000).optional() }).parse(req.body);
+  const dispute = await Dispute.findById(id(req.params.id)).populate('booking');
+  if (!dispute) throw new AppError(404, 'Dispute not found');
+
+  const b = dispute.booking;
+  if (
+    dispute.openedBy !== req.user.id &&
+    b?.renter !== req.user.id &&
+    b?.owner !== req.user.id &&
+    req.user.role !== 'admin'
+  ) {
+    throw new AppError(403, 'Not authorized to resolve this dispute');
+  }
+
+  dispute.status = 'resolved';
+  dispute.resolutionNote = resolutionNote || `Resolved mutually by ${req.user.name || 'user'}`;
+  dispute.resolvedBy = req.user.id;
+  dispute.resolvedAt = new Date();
+  await dispute.save();
+
+  if (b) {
+    b.statusHistory.push({ status: 'resolved', actor: req.user.id, at: new Date(), note: dispute.resolutionNote });
+    await b.save();
+  }
+
+  send(res, dispute, 'Dispute marked as resolved');
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════════
