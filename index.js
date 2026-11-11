@@ -199,6 +199,8 @@ const itemSchema = new Schema(
     brand: String,
     model: String,
     description: { type: String, required: true },
+    phone: { type: String, trim: true, default: '' },
+    quantity: { type: Number, required: true, min: 1, default: 1 },
     includes: [String],
     images: [String],
     condition: { type: String, enum: ['New', 'Like New', 'Excellent', 'Good', 'Fair'], required: true },
@@ -524,6 +526,8 @@ const itemInput = z.object({
   brand: z.string().max(80).optional(),
   model: z.string().max(80).optional(),
   description: z.string().min(10).max(5000),
+  phone: z.string().max(30).optional().default(''),
+  quantity: z.number().int().min(1).optional().default(1),
   includes: z.array(z.string()).max(30).default([]),
   images: z.array(z.string().url()).max(8).default([]),
   condition: z.enum(['New', 'Like New', 'Excellent', 'Good', 'Fair']),
@@ -598,11 +602,12 @@ app.get('/api/items/:id', wrap(async (req, res) => {
     authMongoClient
       .db()
       .collection('user')
-      .findOne({ _id: toMongoId(item.owner) }, { projection: { name: 1, image: 1, location: 1, bio: 1, trustScore: 1, isVerified: 1 } }),
+      .findOne({ _id: toMongoId(item.owner) }, { projection: { name: 1, image: 1, location: 1, bio: 1, trustScore: 1, isVerified: 1, phone: 1 } }),
     Booking.find({ item: item._id, status: { $in: activeStatuses } }, { startDate: 1, endDate: 1 }).lean(),
   ]);
 
-  send(res, { ...item, owner, bookedDates });
+  const phone = item.phone || owner?.phone || '';
+  send(res, { ...item, phone, owner: { ...owner, phone }, bookedDates });
 }));
 
 // READ – item availability for a given month
@@ -709,7 +714,7 @@ app.get('/api/owners/:id', wrap(async (req, res) => {
     authMongoClient
       .db()
       .collection('user')
-      .findOne({ _id: toMongoId(ownerId) }, { projection: { name: 1, image: 1, location: 1, bio: 1, trustScore: 1, isVerified: 1, createdAt: 1 } }),
+      .findOne({ _id: toMongoId(ownerId) }, { projection: { name: 1, image: 1, location: 1, bio: 1, trustScore: 1, isVerified: 1, createdAt: 1, phone: 1 } }),
     Item.find({ owner: ownerId, status: 'approved' }).limit(50).lean(),
     Review.find({ reviewee: ownerId }).sort({ createdAt: -1 }).limit(30).lean(),
   ]);
