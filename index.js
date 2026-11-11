@@ -213,7 +213,7 @@ const itemSchema = new Schema(
       },
     },
     pickupOption: { type: String, enum: ['owner_pickup', 'delivery', 'both'], default: 'both' },
-    status: { type: String, enum: ['pending', 'approved', 'rejected', 'paused'], default: 'pending', index: true },
+    status: { type: String, enum: ['pending', 'approved', 'rejected', 'paused'], default: 'approved', index: true },
     avgRating: { type: Number, default: 0 },
     reviewCount: { type: Number, default: 0 },
     totalBookings: { type: Number, default: 0 },
@@ -568,7 +568,8 @@ app.get('/api/items', wrap(async (req, res) => {
     req.query.sort === 'price_asc' ? { 'pricing.daily': 1 }
     : req.query.sort === 'price_desc' ? { 'pricing.daily': -1 }
     : req.query.sort === 'rating' ? { avgRating: -1 }
-    : { totalBookings: -1, avgRating: -1 };
+    : req.query.sort === 'newest' ? { createdAt: -1 }
+    : { createdAt: -1, totalBookings: -1, avgRating: -1 };
 
   const [items, total] = await Promise.all([
     Item.find(query).sort(sort).skip(skip).limit(limit).lean(),
@@ -636,7 +637,7 @@ app.get('/api/items/:id/reviews', wrap(async (req, res) => {
 // CREATE – create a new item listing
 app.post('/api/items', requireAuth, writeLimiter, wrap(async (req, res) => {
   const data = itemInput.parse(req.body);
-  const item = await Item.create({ ...data, owner: req.user.id });
+  const item = await Item.create({ ...data, owner: req.user.id, status: 'approved' });
   send(res, item, 'Listing created', 201);
 }));
 
