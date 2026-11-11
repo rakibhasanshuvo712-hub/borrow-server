@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { Server as SocketServer } from 'socket.io';
-import app from './app.js';
+import app, { allowedOrigins } from './app.js';
 import { connectDatabase } from './config/database.js';
 import { env } from './config/env.js';
 import { auth } from './lib/auth.js';
@@ -9,7 +9,12 @@ import mongoose from 'mongoose';
 import { Conversation, Message } from './models/index.js';
 
 export const httpServer = createServer(app);
-export const io = new SocketServer(httpServer, { cors: { origin: env.FRONTEND_URL, credentials: true } });
+export const io = new SocketServer(httpServer, {
+  cors: {
+    origin: allowedOrigins,
+    credentials: true,
+  },
+});
 io.use(async (socket, next) => { try { const session = await auth.api.getSession({ headers: fromNodeHeaders(socket.request.headers) }); if (!session) return next(new Error('Unauthorized')); socket.data.userId = session.user.id; next(); } catch { next(new Error('Unauthorized')); } });
 io.on('connection', socket => {
   socket.on('conversation:join', async (conversationId: string) => { const conversation = await Conversation.findById(conversationId); if (conversation?.participants.includes(String(socket.data.userId))) socket.join(conversationId); });

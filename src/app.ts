@@ -20,7 +20,35 @@ import { Booking, Category, Conversation, Dispute, Favorite, Item, Message, Revi
 import type { RequestHandler } from 'express';
 import type { BookingStatus } from './types/index.js';
 const app = express();
-app.use(helmet()); app.use(cors({ origin: env.FRONTEND_URL, credentials: true })); app.use(compression()); app.use(morgan('combined'));
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginOpenerPolicy: false,
+    contentSecurityPolicy: env.NODE_ENV === 'production' ? undefined : false,
+  }),
+);
+
+export const allowedOrigins = [
+  env.FRONTEND_URL,
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:8000',
+  'http://127.0.0.1:8000',
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  }),
+);
+app.use(compression());
+app.use(morgan('combined'));
 app.use('/api', asyncHandler(async (_req, _res, next) => { await Promise.all([connectDatabase(), connectAuthDatabase()]); next(); }));
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 100 }); const writeLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60 });
 app.use('/api/auth', authLimiter);

@@ -57,6 +57,22 @@ if (env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY && env.CLOUDINARY_API_SE
 const authMongoClient = new MongoClient(env.MONGODB_URI);
 const authDb = authMongoClient.db();
 
+let authDatabaseReady;
+let authDatabaseConnected = false;
+async function connectAuthDatabase() {
+  if (authDatabaseConnected) return;
+  authDatabaseReady ??= authMongoClient
+    .connect()
+    .then(() => {
+      authDatabaseConnected = true;
+    })
+    .catch((error) => {
+      authDatabaseReady = undefined;
+      throw error;
+    });
+  await authDatabaseReady;
+}
+
 const toMongoId = (value) => {
   try {
     return new ObjectId(value);
@@ -69,7 +85,17 @@ const auth = betterAuth({
   database: mongodbAdapter(authDb),
   baseURL: env.BETTER_AUTH_URL,
   secret: env.BETTER_AUTH_SECRET,
-  trustedOrigins: [env.FRONTEND_URL],
+  trustedOrigins: [
+    env.FRONTEND_URL,
+    'https://borrowhub-client.vercel.app',
+    'https://borrowhub-server.vercel.app',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:5000',
+    'http://127.0.0.1:5000',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+  ].filter(Boolean),
   emailAndPassword: { enabled: true },
   user: {
     additionalFields: {
@@ -88,12 +114,12 @@ const auth = betterAuth({
     user: {
       create: {
         before: async (user) => {
-          const accountType = user.accountType ?? 'renter';
-          if (accountType !== 'renter' && accountType !== 'owner' && accountType !== 'both')
-            throw new Error('accountType must be renter, owner, or both');
+          const rawAccountType = String(user.accountType || user.role || 'renter').toLowerCase();
+          const accountType = ['renter', 'owner', 'both'].includes(rawAccountType) ? rawAccountType : 'renter';
           return {
             data: {
               ...user,
+              accountType,
               role: accountType === 'renter' ? 'renter' : 'owner',
               canRent: accountType !== 'owner',
               canList: accountType !== 'renter',
@@ -106,7 +132,7 @@ const auth = betterAuth({
   advanced: {
     useSecureCookies: env.NODE_ENV === 'production',
     defaultCookieAttributes: {
-      sameSite: env.COOKIE_SAME_SITE,
+      sameSite: env.NODE_ENV === 'production' ? 'none' : env.COOKIE_SAME_SITE,
       secure: env.NODE_ENV === 'production',
       httpOnly: true,
     },
@@ -371,8 +397,37 @@ const priceForDays = (days, pricing) => {
 // ─── Express app ────────────────────────────────────────────────────────────────
 const app = express();
 
-app.use(helmet());
-app.use(cors({ origin: env.FRONTEND_URL, credentials: true }));
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginOpenerPolicy: false,
+    contentSecurityPolicy: env.NODE_ENV === 'production' ? undefined : false,
+  }),
+);
+
+const allowedOrigins = [
+  env.FRONTEND_URL,
+  'https://borrowhub-client.vercel.app',
+  'https://borrowhub-server.vercel.app',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5000',
+  'http://127.0.0.1:5000',
+  'http://localhost:8000',
+  'http://127.0.0.1:8000',
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  }),
+);
 app.use(compression());
 app.use(morgan('combined'));
 
@@ -1125,7 +1180,12 @@ app.use(errorHandler);
 
 // ─── HTTP + Socket.io server ────────────────────────────────────────────────────
 const httpServer = createServer(app);
-const io = new SocketServer(httpServer, { cors: { origin: env.FRONTEND_URL, credentials: true } });
+const io = new SocketServer(httpServer, {
+  cors: {
+    origin: allowedOrigins,
+    credentials: true,
+  },
+});
 
 io.use(async (socket, next) => {
   try {

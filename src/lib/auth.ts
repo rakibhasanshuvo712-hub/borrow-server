@@ -23,7 +23,13 @@ export async function connectAuthDatabase(): Promise<void> {
 }
 export const auth = betterAuth({
   database: mongodbAdapter(db), baseURL: env.BETTER_AUTH_URL, secret: env.BETTER_AUTH_SECRET,
-  trustedOrigins: [env.FRONTEND_URL], emailAndPassword: { enabled: true },
+  trustedOrigins: [
+    env.FRONTEND_URL,
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+  ].filter(Boolean), emailAndPassword: { enabled: true },
   user: { additionalFields: {
     role: { type: 'string', required: false, defaultValue: 'renter', input: false },
     phone: { type: 'string', required: false, input: true }, location: { type: 'string', required: false, input: true },
@@ -32,9 +38,9 @@ export const auth = betterAuth({
     accountType: { type: 'string', required: false, defaultValue: 'renter', input: true }
   } },
   databaseHooks: { user: { create: { before: async user => {
-    const accountType = user.accountType ?? 'renter';
-    if (accountType !== 'renter' && accountType !== 'owner' && accountType !== 'both') throw new Error('accountType must be renter, owner, or both');
-    return { data: { ...user, role: accountType === 'renter' ? 'renter' : 'owner', canRent: accountType !== 'owner', canList: accountType !== 'renter' } };
+    const rawAccountType = String(user.accountType || (user as { role?: string }).role || 'renter').toLowerCase();
+    const accountType = ['renter', 'owner', 'both'].includes(rawAccountType) ? rawAccountType : 'renter';
+    return { data: { ...user, accountType, role: accountType === 'renter' ? 'renter' : 'owner', canRent: accountType !== 'owner', canList: accountType !== 'renter' } };
   } } } },
   advanced: { useSecureCookies: env.NODE_ENV === 'production', defaultCookieAttributes: { sameSite: env.COOKIE_SAME_SITE, secure: env.NODE_ENV === 'production', httpOnly: true } }
 });
